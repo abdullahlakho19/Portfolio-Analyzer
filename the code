@@ -1,0 +1,87 @@
+import yfinance as yf
+import pandas as pd
+import riskfolio as rp
+import matplotlib.pyplot as plt
+import numpy as np
+
+# ==========================================
+# STEP 1: SETUP & DATA EXTRACTION
+# ==========================================
+# Diversified asset list including Gold and Crypto for better correlation analysis
+assets = ['AAPL', 'META', 'GOOGL', 'MSFT', 'TSLA']
+assets.sort()
+
+print(f"⏳ Downloading 5 years of data for: {assets}...")
+# Fetching closing prices and removing timezones for Excel compatibility
+data = yf.download(assets, period="5y")['Close']
+data.index = data.index.tz_localize(None)
+returns = data.pct_change().dropna()
+
+# ==========================================
+# STEP 2: PORTFOLIO OPTIMIZATION (RISKFOLIO)
+# ==========================================
+port = rp.Portfolio(returns=returns)
+# Calculating historical mean returns and covariance matrix
+port.assets_stats(method_mu='hist', method_cov='hist')
+
+# Optimization for Maximum Sharpe Ratio (The "Best" Portfolio)
+w_max_sharpe = port.optimization(model='Classic', rm='MV', obj='Sharpe', rf=0, hist=True)
+
+# Calculate 50 points along the Efficient Frontier for plotting
+points = 50
+frontier = port.efficient_frontier(model='Classic', rm='MV', points=points, rf=0, hist=True)
+
+# ==========================================
+# STEP 3: PYTHON VISUALIZATIONS (FIXED LAYOUT)
+# ==========================================
+# 'constrained' layout fixes the overlapping colorbar issue seen in previous runs
+fig, ax = plt.subplots(2, 2, figsize=(14, 10), layout="constrained")
+
+# Graph 1: Allocation Pie Chart
+rp.plot_pie(w=w_max_sharpe, title='Optimized Asset Allocation', ax=ax[0, 0])
+
+# Graph 2: Efficient Frontier Curve
+rp.plot_frontier(w_frontier=frontier, returns=returns, rm='MV', rf=0, ax=ax[0, 1])
+
+# Graph 3: Risk Contribution (Shows which stock adds the most volatility)
+rp.plot_risk_con(w=w_max_sharpe, returns=returns, rm='MV', rf=0, ax=ax[1, 0])
+
+# Graph 4: Correlation Heatmap with Dendrogram
+rp.plot_clusters(returns=returns, linkage='ward', k=None, ax=ax[1, 1])
+
+plt.show()
+
+# ==========================================
+# STEP 4: EXCEL AUTOMATION (ALL DATA INCLUDED)
+# ==========================================
+excel_file = "Project2_Portfolio_Report.xlsx"
+print(f"💾 Saving all quantitative data to {excel_file}...")
+
+with pd.ExcelWriter(excel_file, engine='xlsxwriter') as writer:
+    # 1. Asset Weights Sheet
+    w_max_sharpe.to_excel(writer, sheet_name='Optimal_Weights')
+
+    # 2. Correlation Matrix Sheet (Crucial for showing diversification)
+    returns.corr().to_excel(writer, sheet_name='Correlation_Matrix')
+
+    # 3. Risk Metrics (Covariance/Volatility data)
+    returns.cov().to_excel(writer, sheet_name='Risk_Covariance')
+
+    # 4. Raw Historical Data Audit
+    data.to_excel(writer, sheet_name='Price_History')
+
+    # Add the Pie Chart to the Excel 'Optimal_Weights' sheet
+    workbook = writer.book
+    worksheet = writer.sheets['Optimal_Weights']
+    chart = workbook.add_chart({'type': 'pie'})
+
+    chart.add_series({
+        'name': 'Portfolio Allocation',
+        'categories': ['Optimal_Weights', 1, 0, len(assets), 0],
+        'values': ['Optimal_Weights', 1, 1, len(assets), 1],
+    })
+
+    chart.set_title({'name': 'Maximum Sharpe Ratio Allocation'})
+    worksheet.insert_chart('E2', chart)
+
+print("✅ SUCCESS: Graphs rendered and multi-sheet Excel report generated!")
